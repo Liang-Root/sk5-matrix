@@ -1,17 +1,24 @@
 #!/bin/bash
 set -e
 
-# [环境加固]
+# [1. 环境全自动安装]
 apt update && apt install python3 python3-pip python3-psutil curl iproute2 gunicorn logrotate -y
 pip3 install flask gunicorn --break-system-packages --quiet
 
-# [数据持久化：只有文件不存在时才初始化，更新不丢数据]
+# [2. 下载 Gost 核心（全新安装保障）]
+if [ ! -f /usr/local/bin/gost ]; then
+    echo "正在安装 Gost 核心..."
+    curl -L https://github.com/go-gost/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gunzip > /usr/local/bin/gost
+    chmod +x /usr/local/bin/gost
+fi
+
+# [3. 数据持久化：更新不丢配置]
 [ ! -f /root/proxy_config.json ] && echo "[]" > /root/proxy_config.json
 [ ! -f /root/proxy_ports.json ] && echo "[]" > /root/proxy_ports.json
 [ ! -f /root/proxy_modes.json ] && echo "[]" > /root/proxy_modes.json
 chmod 666 /root/*.json
 
-# [生成 Python 核心：V8.2 逻辑修正版]
+# [4. 生成 Python 核心逻辑：V8.2 修正版]
 cat <<'EOF' > /root/proxy_manager.py
 from flask import Flask, request, render_template_string, jsonify
 import subprocess, os, json, time, re, threading
@@ -23,9 +30,12 @@ last_ms_time = {}
 def load_data():
     p, c, m = [10001, 10002, 10003, 10004, 10005], [], []
     try:
-        with open(PORTS_FILE, 'r') as f: p = json.load(f) or p
-        with open(CONFIG_FILE, 'r') as f: c = json.load(f) or [""] * len(p)
-        with open(MODES_FILE, 'r') as f: m = json.load(f) or ["proxy"] * len(p)
+        if os.path.exists(PORTS_FILE):
+            with open(PORTS_FILE, 'r') as f: p = json.load(f) or p
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f: c = json.load(f) or [""] * len(p)
+        if os.path.exists(MODES_FILE):
+            with open(MODES_FILE, 'r') as f: m = json.load(f) or ["proxy"] * len(p)
     except: pass
     while len(c) < len(p): c.append("")
     while len(m) < len(p): m.append("proxy")
@@ -36,7 +46,7 @@ HTML_TEMPLATE = """
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>五脉神剑 V8.2 | 逻辑修正版</title>
+    <title>五脉神剑 V8.2 | 矩阵大师版</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #020617; color: #38bdf8; font-family: sans-serif; }
@@ -73,7 +83,7 @@ HTML_TEMPLATE = """
                 </div></div>
                 {% endfor %}
             </div>
-            <button type="submit" class="btn btn-info w-100 mt-4 fw-bold">🚀 部署配置（On=代理 / Off=直连）</button>
+            <button type="submit" class="btn btn-info w-100 mt-4 fw-bold">🚀 部署配置（蓝色=代理 / 灰色=直连）</button>
         </form>
     </div>
     <script>
@@ -135,17 +145,14 @@ def add_node():
 def deploy():
     ports, _, _ = load_data()
     new_configs = [request.form.get(f'p{i}', '') for i in range(len(ports))]
-    # 逻辑修正：接收来自 HTML 的 proxy 信号
     new_modes = ["proxy" if request.form.get(f'm{i}') == "proxy" else "direct" for i in range(len(ports))]
     with open(CONFIG_FILE, 'w') as f: json.dump(new_configs, f)
     with open(MODES_FILE, 'w') as f: json.dump(new_modes, f)
-    
     subprocess.run(["pkill", "-15", "gost"])
     time.sleep(1)
     for i, addr in enumerate(new_configs):
         addr = addr.strip()
         with open("/var/log/gost.log", "a") as logf:
-            # 逻辑判定：只有处于 proxy 模式且填了地址，才走二级转发
             if new_modes[i] == "proxy" and addr:
                 subprocess.Popen(["/usr/local/bin/gost", "-L", f":{ports[i]}", "-F", f"socks5://{addr}"], stdout=logf, stderr=logf)
             else:
@@ -156,7 +163,30 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8888)
 EOF
 
-# [注册服务并启动]
+# [5. 核心：服务注册与自动启动（补全）]
+cat <<EOF > /etc/systemd/system/proxy-web.service
+[Unit]
+Description=Cyber Proxy Matrix V8.2 Master Edition
+After=network.target
+
+[Service]
+WorkingDirectory=/root
+ExecStart=/usr/bin/gunicorn --workers 1 --worker-class gthread --threads 4 --bind 0.0.0.0:8888 --timeout 30 proxy_manager:app
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# [6. 激活服务并收尾]
 systemctl daemon-reload
+systemctl enable proxy-web
 systemctl restart proxy-web
-echo "✔️ V8.2 逻辑修正 + 数据持久化更新完成！"
+
+echo "------------------------------------------------"
+echo "✔️  V8.2 大师版全新安装完成！"
+echo "✔️  开关逻辑：蓝色=代理 / 灰色=直连"
+echo "✔️  数据保护：保留现有配置，更新不丢数据"
+echo "✔️  服务状态：Systemd 自动管理已开启"
+echo "------------------------------------------------"
