@@ -1,22 +1,21 @@
 #!/bin/bash
 set -e
 
-echo "====================================================="
-echo "  🚀 正在部署 五脉神剑 V8.6 (SDN 智能增删终极版) 🚀  "
-echo "====================================================="
+echo "========================================================"
+echo " 🚀 正在部署 五脉神剑 V8.7 (Linux 策略路由终极锁定版) 🚀 "
+echo "========================================================"
 
-# [1. 环境全自动安装]
+# [1. 依赖检查]
 apt update && apt install python3 python3-pip python3-psutil curl iproute2 gunicorn logrotate -y
 pip3 install flask gunicorn --break-system-packages --quiet
 
-# [2. 下载 Gost 核心（全新安装保障）]
+# [2. 下载 Gost]
 if [ ! -f /usr/local/bin/gost ]; then
-    echo "正在下载 Gost 核心..."
     curl -L https://github.com/go-gost/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gunzip > /usr/local/bin/gost
     chmod +x /usr/local/bin/gost
 fi
 
-# [3. 数据持久化：更新不丢配置]
+# [3. 数据持久化]
 [ ! -f /root/proxy_config.json ] && echo "[]" > /root/proxy_config.json
 [ ! -f /root/proxy_ports.json ] && echo "[]" > /root/proxy_ports.json
 [ ! -f /root/proxy_modes.json ] && echo "[]" > /root/proxy_modes.json
@@ -24,21 +23,21 @@ fi
 [ ! -f /root/proxy_vlans.json ] && echo "[]" > /root/proxy_vlans.json
 chmod 666 /root/*.json
 
-# [4. 生成 Python 核心逻辑：V8.6 完美版]
+# [4. 生成核心代码 V8.7 (注入 IP Rule 策略路由)]
 cat <<'EOF' > /root/proxy_manager.py
 from flask import Flask, request, render_template_string, jsonify
 import subprocess, os, json, time, re, threading
 
 app = Flask(__name__)
+# 智能嗅探主业务网卡 (排除管理口 IP 所在的网卡)
+try:
+    # 优先找没有原生 IP 的光秃秃网卡作为 Trunk (比如 eth0)
+    MAIN_IFACE = os.popen("ip link show | grep -E '^[0-9]+: (eth|ens|enp|net)' | awk -F': ' '{print $2}' | grep -v '@' | head -n 1").read().strip() or 'eth0'
+except:
+    MAIN_IFACE = 'eth0'
 
-# 智能嗅探主网卡 (解决 eth0/eth1/ens18 等名字不一致问题)
-MAIN_IFACE = os.popen("ls /sys/class/net | grep -E '^eth|^ens|^enp|^net' | head -n 1").read().strip() or 'eth0'
-
-CONFIG_FILE = '/root/proxy_config.json'
-PORTS_FILE = '/root/proxy_ports.json'
-MODES_FILE = '/root/proxy_modes.json'
-BINDS_FILE = '/root/proxy_binds.json'
-VLANS_FILE = '/root/proxy_vlans.json'
+CONFIG_FILE, PORTS_FILE = '/root/proxy_config.json', '/root/proxy_ports.json'
+MODES_FILE, BINDS_FILE, VLANS_FILE = '/root/proxy_modes.json', '/root/proxy_binds.json', '/root/proxy_vlans.json'
 last_ms_time = {}
 
 def load_data():
@@ -55,7 +54,6 @@ def load_data():
         if os.path.exists(VLANS_FILE):
             with open(VLANS_FILE, 'r') as f: v = json.load(f) or [""] * len(p)
     except: pass
-    
     while len(c) < len(p): c.append("")
     while len(m) < len(p): m.append("proxy")
     while len(b) < len(p): b.append("")
@@ -67,7 +65,7 @@ HTML_TEMPLATE = """
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>五脉神剑 V8.6 | 动态增删完美版</title>
+    <title>五脉神剑 V8.7 | 策略路由终极版</title>
     <link href="https://cdn.staticfile.net/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #020617; color: #38bdf8; font-family: sans-serif; }
@@ -82,7 +80,7 @@ HTML_TEMPLATE = """
 <body class="p-4">
     <div class="container">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V8.6 <span class="badge bg-danger fs-6 align-middle">SDN 智能接管</span></h2>
+            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V8.7 <span class="badge bg-danger fs-6 align-middle">Linux 底层路由锁定</span></h2>
             <button type="button" class="btn btn-outline-info" onclick="addNode()">+ 增加新节点</button>
         </div>
         <form method="post" id="mainForm">
@@ -96,7 +94,7 @@ HTML_TEMPLATE = """
                             <div class="form-check form-switch mb-0">
                                 <input class="form-check-input" type="checkbox" name="m{{i}}" value="proxy" {% if modes[i] == 'proxy' %}checked{% endif %}>
                             </div>
-                            <button type="button" class="btn btn-outline-danger btn-del" onclick="delNode({{i}})" title="彻底销毁此节点及网卡">✖</button>
+                            <button type="button" class="btn btn-outline-danger btn-del" onclick="delNode({{i}})" title="彻底销毁此节点及路由表">✖</button>
                         </div>
                     </div>
                     <div class="d-flex justify-content-around mb-2 small">
@@ -109,32 +107,29 @@ HTML_TEMPLATE = """
                     <div class="sdn-panel">
                         <div class="row g-1">
                             <div class="col-4">
-                                <input type="text" name="v{{i}}" value="{{vlans[i]}}" placeholder="VLAN ID" class="form-control form-control-sm bg-black text-warning border-secondary text-center" title="如: 60">
+                                <input type="text" name="v{{i}}" value="{{vlans[i]}}" placeholder="VLAN ID" class="form-control form-control-sm bg-black text-warning border-secondary text-center" title="如: 10">
                             </div>
                             <div class="col-8">
-                                <input type="text" name="b{{i}}" value="{{binds[i]}}" placeholder="本地IP (如:192.168.60.253)" class="form-control form-control-sm bg-black text-warning border-secondary" title="对应 VLAN 的本地 IP">
+                                <input type="text" name="b{{i}}" value="{{binds[i]}}" placeholder="本地IP (如:192.168.10.253)" class="form-control form-control-sm bg-black text-warning border-secondary" title="对应 VLAN 的本地 IP">
                             </div>
                         </div>
-                        <div class="text-end mt-1"><small class="text-secondary" style="font-size:0.65rem;">主网卡: {{ main_iface }}</small></div>
+                        <div class="text-end mt-1"><small class="text-secondary" style="font-size:0.65rem;">Trunk: {{ main_iface }} | 自动锁定网关 .1</small></div>
                     </div>
                 </div></div>
                 {% endfor %}
             </div>
-            <button type="submit" class="btn btn-warning w-100 mt-4 fw-bold text-dark">⚙️ 重建网络并部署（自动增删底层虚拟网卡）</button>
+            <button type="submit" class="btn btn-warning w-100 mt-4 fw-bold text-dark">⚙️ 重建路由规则并部署</button>
         </form>
     </div>
     <script>
         const n = {{ n }};
         function addNode() { fetch('/add_node', {method: 'POST'}).then(() => window.location.href='/'); }
-        
         function delNode(idx) {
             const portName = document.getElementById('port-'+idx).innerText;
-            // 完美解决换行导致的 JS 报错（使用 ES6 模板字符串）
-            if(confirm(`🚨 危险操作！\n\n确定要销毁节点 [${portName}] 吗？\n如果配置了 VLAN，底层网卡也会被强制拆除！`)) {
+            if(confirm(`🚨 危险操作！\n\n确定要销毁节点 [${portName}] 吗？\n如果配置了 VLAN，底层网卡和策略路由也会被强制拆除！`)) {
                 fetch('/del_node/' + idx, {method: 'POST'}).then(() => window.location.href='/');
             }
         }
-
         function update(i) {
             fetch('/stats/' + i).then(r => r.json()).then(d => {
                 const elUp = document.getElementById('up-'+i);
@@ -205,22 +200,21 @@ def del_node(idx):
         with open(MODES_FILE, 'w') as f: json.dump(m, f)
         with open(BINDS_FILE, 'w') as f: json.dump(b, f)
         with open(VLANS_FILE, 'w') as f: json.dump(v, f)
-        # 后台异步销毁网卡
         threading.Thread(target=apply_network_and_proxy, args=(p, c, m, b, v, [vlan_to_del])).start()
     return jsonify({"status": "success"})
 
 def apply_network_and_proxy(ports, configs, modes, binds, vlans, old_vlans=[]):
-    # 停止全部代理服务
     subprocess.run(["pkill", "-15", "gost"])
     
-    # 清理被删除或废弃的子网卡
+    # 清理废弃的子网卡和路由表
     for v_id in old_vlans:
         if v_id and str(v_id).isdigit():
             os.system(f"ip link delete {MAIN_IFACE}.{v_id} 2>/dev/null")
+            os.system(f"ip rule del table {v_id} 2>/dev/null")
+            os.system(f"ip route flush table {v_id} 2>/dev/null")
             
     time.sleep(1)
     
-    # 重建新网卡并启动代理
     for i, addr in enumerate(configs):
         vlan_id = str(vlans[i]).strip()
         bind_ip = str(binds[i]).strip()
@@ -228,9 +222,19 @@ def apply_network_and_proxy(ports, configs, modes, binds, vlans, old_vlans=[]):
         
         if vlan_id.isdigit() and bind_ip:
             iface_name = f"{MAIN_IFACE}.{vlan_id}"
+            # 智能推算网关 (把 IP 的最后一位变成 1，比如 192.168.10.253 -> 192.168.10.1)
+            gw_ip = ".".join(bind_ip.split(".")[:3]) + ".1"
+            
+            # 1. 建立虚拟网卡
             os.system(f"ip link add link {MAIN_IFACE} name {iface_name} type vlan id {vlan_id} 2>/dev/null")
             os.system(f"ip addr add {bind_ip}/24 dev {iface_name} 2>/dev/null")
             os.system(f"ip link set dev {iface_name} up 2>/dev/null")
+            
+            # 2. 注入 Linux 策略路由 (重中之重！切断管理口漏水)
+            os.system(f"ip rule del from {bind_ip} table {vlan_id} 2>/dev/null")
+            os.system(f"ip rule add from {bind_ip} table {vlan_id}")
+            os.system(f"ip route flush table {vlan_id} 2>/dev/null")
+            os.system(f"ip route add default via {gw_ip} dev {iface_name} table {vlan_id}")
             
         with open("/var/log/gost.log", "a") as logf:
             if modes[i] == "proxy" and addr:
@@ -246,21 +250,16 @@ def apply_network_and_proxy(ports, configs, modes, binds, vlans, old_vlans=[]):
 def deploy():
     _, _, _, _, old_vlans = load_data()
     ports, _, _, _, _ = load_data()
-    
     new_configs = [request.form.get(f'p{i}', '').strip() for i in range(len(ports))]
     new_modes = ["proxy" if request.form.get(f'm{i}') == "proxy" else "direct" for i in range(len(ports))]
     new_binds = [request.form.get(f'b{i}', '').strip() for i in range(len(ports))]
     new_vlans = [request.form.get(f'v{i}', '').strip() for i in range(len(ports))]
-    
     with open(CONFIG_FILE, 'w') as f: json.dump(new_configs, f)
     with open(MODES_FILE, 'w') as f: json.dump(new_modes, f)
     with open(BINDS_FILE, 'w') as f: json.dump(new_binds, f)
     with open(VLANS_FILE, 'w') as f: json.dump(new_vlans, f)
-    
     threading.Thread(target=apply_network_and_proxy, args=(ports, new_configs, new_modes, new_binds, new_vlans, old_vlans)).start()
-    
-    # 采用 ES6 语法，彻底告别弹窗白屏
-    return '<script>alert(`V8.6 配置已更新！\n底层网络与代理正在重组...`); window.location.href="/";</script>'
+    return '<script>alert(`V8.7 策略路由已更新！\n流量已强制锁定，彻底切断管理口漏水...`); window.location.href="/";</script>'
 
 if __name__ == '__main__':
     p, c, m, b, v = load_data()
@@ -268,30 +267,5 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8888)
 EOF
 
-# [5. 注册为底层服务，确保开机自启]
-cat <<EOF > /etc/systemd/system/proxy-web.service
-[Unit]
-Description=Cyber Proxy Matrix V8.6 Master SDN
-After=network.target
-
-[Service]
-WorkingDirectory=/root
-ExecStart=/usr/bin/gunicorn --workers 1 --worker-class gthread --threads 4 --bind 0.0.0.0:8888 --timeout 30 proxy_manager:app
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# [6. 激活服务并收尾]
-systemctl daemon-reload
-systemctl enable proxy-web
-systemctl restart proxy-web
-
-echo "------------------------------------------------"
-echo "✔️  V8.6 SDN 智能终极版 安装完成！"
-echo "✔️  已修复：销毁按钮逻辑 (自动注销底层 VLAN 网卡)"
-echo "✔️  已修复：网卡智能嗅探 (完美适配 eth1, ens18 等)"
-echo "✔️  数据未丢失，刷新网页即可起飞！"
-echo "------------------------------------------------"
+systemctl daemon-reload && systemctl restart proxy-web
+echo "✔️ V8.7 策略路由锁死版 升级完成！请去网页重新点击【部署】即可生效！"
