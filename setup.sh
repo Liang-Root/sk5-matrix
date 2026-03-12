@@ -5,30 +5,41 @@ set -e
 apt update && apt install python3 python3-pip python3-psutil curl iproute2 gunicorn logrotate -y
 pip3 install flask gunicorn --break-system-packages --quiet
 
-# [2. 下载 Gost 核心（全新安装保障）]
+# [2. 下载 Gost 核心]
 if [ ! -f /usr/local/bin/gost ]; then
     echo "正在安装 Gost 核心..."
     curl -L https://github.com/go-gost/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gunzip > /usr/local/bin/gost
     chmod +x /usr/local/bin/gost
 fi
 
-# [3. 数据持久化：更新不丢配置]
+# [3. 数据持久化 (新增 vlans 存储)]
 [ ! -f /root/proxy_config.json ] && echo "[]" > /root/proxy_config.json
 [ ! -f /root/proxy_ports.json ] && echo "[]" > /root/proxy_ports.json
 [ ! -f /root/proxy_modes.json ] && echo "[]" > /root/proxy_modes.json
+[ ! -f /root/proxy_binds.json ] && echo "[]" > /root/proxy_binds.json
+[ ! -f /root/proxy_vlans.json ] && echo "[]" > /root/proxy_vlans.json
 chmod 666 /root/*.json
 
-# [4. 生成 Python 核心逻辑：V8.2 修正版]
+# [4. 生成 Python 核心：V8.5 SDN 引擎版]
 cat <<'EOF' > /root/proxy_manager.py
 from flask import Flask, request, render_template_string, jsonify
 import subprocess, os, json, time, re, threading
 
 app = Flask(__name__)
-CONFIG_FILE, PORTS_FILE, MODES_FILE = '/root/proxy_config.json', '/root/proxy_ports.json', '/root/proxy_modes.json'
+# ==========================================
+# 核心配置：PVE 容器主网卡名称，默认通常是 eth0
+MAIN_IFACE = "eth0" 
+# ==========================================
+
+CONFIG_FILE = '/root/proxy_config.json'
+PORTS_FILE = '/root/proxy_ports.json'
+MODES_FILE = '/root/proxy_modes.json'
+BINDS_FILE = '/root/proxy_binds.json'
+VLANS_FILE = '/root/proxy_vlans.json'
 last_ms_time = {}
 
 def load_data():
-    p, c, m = [10001, 10002, 10003, 10004, 10005], [], []
+    p, c, m, b, v = [10001, 10002, 10003, 10004, 10005], [], [], [], []
     try:
         if os.path.exists(PORTS_FILE):
             with open(PORTS_FILE, 'r') as f: p = json.load(f) or p
@@ -36,29 +47,37 @@ def load_data():
             with open(CONFIG_FILE, 'r') as f: c = json.load(f) or [""] * len(p)
         if os.path.exists(MODES_FILE):
             with open(MODES_FILE, 'r') as f: m = json.load(f) or ["proxy"] * len(p)
+        if os.path.exists(BINDS_FILE):
+            with open(BINDS_FILE, 'r') as f: b = json.load(f) or [""] * len(p)
+        if os.path.exists(VLANS_FILE):
+            with open(VLANS_FILE, 'r') as f: v = json.load(f) or [""] * len(p)
     except: pass
+    
     while len(c) < len(p): c.append("")
     while len(m) < len(p): m.append("proxy")
-    return p, c, m
+    while len(b) < len(p): b.append("")
+    while len(v) < len(p): v.append("")
+    return p, c, m, b, v
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>五脉神剑 V8.2 | 矩阵大师版</title>
+    <title>五脉神剑 V8.5 | SDN 软路由引擎</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #020617; color: #38bdf8; font-family: sans-serif; }
         .card { background: rgba(15, 23, 42, 0.95); border: 1px solid #0ea5e9; border-radius: 12px; margin-bottom: 20px; }
         .port-label { font-family: monospace; font-size: 1.1rem; font-weight: bold; color: #fff; }
         .form-check-input:checked { background-color: #0ea5e9; border-color: #0ea5e9; }
+        .sdn-panel { background: #0f172a; border: 1px dashed #eab308; padding: 10px; border-radius: 8px; margin-top: 10px; }
     </style>
 </head>
 <body class="p-4">
     <div class="container">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V8.2</h2>
+            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V8.5 <span class="badge bg-danger fs-6 align-middle">SDN 虚拟网卡接管</span></h2>
             <button type="button" class="btn btn-outline-info" onclick="addNode()">+ 增加节点</button>
         </div>
         <form method="post">
@@ -79,11 +98,25 @@ HTML_TEMPLATE = """
                         <span class="text-success">↓ <b id="down-{{i}}">0K</b></span>
                         <span class="text-info">↑ <b id="up-{{i}}">0K</b></span>
                     </div>
-                    <input type="text" name="p{{i}}" value="{{configs[i]}}" placeholder="账号:密码@IP:端口" class="form-control form-control-sm bg-black text-info border-secondary">
+                    
+                    <input type="text" name="p{{i}}" value="{{configs[i]}}" placeholder="账号:密码@代理IP:端口" class="form-control form-control-sm bg-black text-info border-secondary mb-2" title="上游SK5节点">
+                    
+                    <div class="sdn-panel">
+                        <div class="row g-1">
+                            <div class="col-4">
+                                <input type="text" name="v{{i}}" value="{{vlans[i]}}" placeholder="VLAN ID" class="form-control form-control-sm bg-black text-warning border-secondary text-center" title="如: 60">
+                            </div>
+                            <div class="col-8">
+                                <input type="text" name="b{{i}}" value="{{binds[i]}}" placeholder="本地虚拟IP (如:192.168.60.253)" class="form-control form-control-sm bg-black text-warning border-secondary" title="对应 VLAN 的本地 IP">
+                            </div>
+                        </div>
+                        <div class="text-end mt-1"><small class="text-secondary" style="font-size:0.65rem;">留空则不创建子网卡</small></div>
+                    </div>
+
                 </div></div>
                 {% endfor %}
             </div>
-            <button type="submit" class="btn btn-info w-100 mt-4 fw-bold">🚀 部署配置（蓝色=代理 / 灰色=直连）</button>
+            <button type="submit" class="btn btn-warning w-100 mt-4 fw-bold text-dark">⚙️ 重建网络并部署（系统将自动增删虚拟网卡）</button>
         </form>
     </div>
     <script>
@@ -108,12 +141,12 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index_view():
-    p, c, m = load_data()
-    return render_template_string(HTML_TEMPLATE, ports=p, configs=c, modes=m, n=len(p))
+    p, c, m, b, v = load_data()
+    return render_template_string(HTML_TEMPLATE, ports=p, configs=c, modes=m, binds=b, vlans=v, n=len(p))
 
 @app.route('/stats/<int:idx>')
 def stats(idx):
-    ports, _, _ = load_data()
+    ports, _, _, _, _ = load_data()
     port = ports[idx]
     global last_ms_time
     try:
@@ -134,39 +167,81 @@ def stats(idx):
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
-    p, c, m = load_data()
-    p.append(max(p) + 1 if p else 10001); c.append(""); m.append("proxy")
+    p, c, m, b, v = load_data()
+    p.append(max(p) + 1 if p else 10001); c.append(""); m.append("proxy"); b.append(""); v.append("")
     with open(PORTS_FILE, 'w') as f: json.dump(p, f)
     with open(CONFIG_FILE, 'w') as f: json.dump(c, f)
     with open(MODES_FILE, 'w') as f: json.dump(m, f)
+    with open(BINDS_FILE, 'w') as f: json.dump(b, f)
+    with open(VLANS_FILE, 'w') as f: json.dump(v, f)
     return jsonify({"status": "success"})
+
+def apply_network_and_proxy(ports, configs, modes, binds, vlans, old_vlans=[]):
+    # 1. 杀死老 Gost 进程
+    subprocess.run(["pkill", "-15", "gost"])
+    
+    # 2. 清理旧的虚拟网卡 (防止网段更换时残留垃圾)
+    for v in old_vlans:
+        if v and str(v).strip().isdigit():
+            os.system(f"ip link delete {MAIN_IFACE}.{v} 2>/dev/null")
+            
+    time.sleep(1) # 等待内核释放网络资源
+    
+    # 3. 建立新虚拟网卡并启动 Gost
+    for i, addr in enumerate(configs):
+        vlan_id = str(vlans[i]).strip()
+        bind_ip = str(binds[i]).strip()
+        bind_suffix = f"?bind={bind_ip}" if bind_ip else ""
+        
+        # [SDN 核心操作]：如果填了 VLAN 和 IP，通过系统命令强行拉起网卡
+        if vlan_id.isdigit() and bind_ip:
+            iface_name = f"{MAIN_IFACE}.{vlan_id}"
+            os.system(f"ip link add link {MAIN_IFACE} name {iface_name} type vlan id {vlan_id} 2>/dev/null")
+            os.system(f"ip addr add {bind_ip}/24 dev {iface_name} 2>/dev/null")
+            os.system(f"ip link set dev {iface_name} up 2>/dev/null")
+            
+        # 启动 Gost，注入绑定的源 IP
+        with open("/var/log/gost.log", "a") as logf:
+            if modes[i] == "proxy" and addr:
+                cmd = ["/usr/local/bin/gost", "-L", f"socks5://0.0.0.0:{ports[i]}", "-F", f"socks5://{addr}{bind_suffix}"]
+                subprocess.Popen(cmd, stdout=logf, stderr=logf)
+            else:
+                cmd = ["/usr/local/bin/gost", "-L", f"socks5://0.0.0.0:{ports[i]}"]
+                if bind_suffix:
+                    cmd.extend(["-F", f"direct://{bind_suffix}"])
+                subprocess.Popen(cmd, stdout=logf, stderr=logf)
 
 @app.route('/', methods=['POST'])
 def deploy():
-    ports, _, _ = load_data()
-    new_configs = [request.form.get(f'p{i}', '') for i in range(len(ports))]
+    _, _, _, _, old_vlans = load_data()
+    ports, _, _, _, _ = load_data()
+    
+    new_configs = [request.form.get(f'p{i}', '').strip() for i in range(len(ports))]
     new_modes = ["proxy" if request.form.get(f'm{i}') == "proxy" else "direct" for i in range(len(ports))]
+    new_binds = [request.form.get(f'b{i}', '').strip() for i in range(len(ports))]
+    new_vlans = [request.form.get(f'v{i}', '').strip() for i in range(len(ports))]
+    
     with open(CONFIG_FILE, 'w') as f: json.dump(new_configs, f)
     with open(MODES_FILE, 'w') as f: json.dump(new_modes, f)
-    subprocess.run(["pkill", "-15", "gost"])
-    time.sleep(1)
-    for i, addr in enumerate(new_configs):
-        addr = addr.strip()
-        with open("/var/log/gost.log", "a") as logf:
-            if new_modes[i] == "proxy" and addr:
-                subprocess.Popen(["/usr/local/bin/gost", "-L", f":{ports[i]}", "-F", f"socks5://{addr}"], stdout=logf, stderr=logf)
-            else:
-                subprocess.Popen(["/usr/local/bin/gost", "-L", f":{ports[i]}"], stdout=logf, stderr=logf)
-    return '<script>alert("V8.2 逻辑修正版部署成功！"); window.location.href="/";</script>'
+    with open(BINDS_FILE, 'w') as f: json.dump(new_binds, f)
+    with open(VLANS_FILE, 'w') as f: json.dump(new_vlans, f)
+    
+    # 异步执行网络接管，防止前端网页卡死
+    threading.Thread(target=apply_network_and_proxy, args=(ports, new_configs, new_modes, new_binds, new_vlans, old_vlans)).start()
+    
+    return '<script>alert("V8.5 网络重建指令已下发！\n后台正在创建虚拟网卡..."); window.location.href="/";</script>'
 
 if __name__ == '__main__':
+    # 开机自启时的初始化：直接读取 JSON 恢复整个网络拓扑
+    p, c, m, b, v = load_data()
+    apply_network_and_proxy(p, c, m, b, v, old_vlans=[])
     app.run(host='0.0.0.0', port=8888)
 EOF
 
-# [5. 核心：服务注册与自动启动（补全）]
+# [5. 注册为底层服务]
 cat <<EOF > /etc/systemd/system/proxy-web.service
 [Unit]
-Description=Cyber Proxy Matrix V8.2 Master Edition
+Description=Cyber Proxy Matrix V8.5 SDN Engine
 After=network.target
 
 [Service]
@@ -179,14 +254,14 @@ User=root
 WantedBy=multi-user.target
 EOF
 
-# [6. 激活服务并收尾]
+# [6. 激活服务]
 systemctl daemon-reload
 systemctl enable proxy-web
 systemctl restart proxy-web
 
 echo "------------------------------------------------"
-echo "✔️  V8.2 大师版全新安装完成！"
-echo "✔️  开关逻辑：蓝色=代理 / 灰色=直连"
-echo "✔️  数据保护：保留现有配置，更新不丢数据"
-echo "✔️  服务状态：Systemd 自动管理已开启"
+echo "🔥 V8.5 SDN 引擎版 已就绪！"
+echo "🔥 核心升级：Web 面板直接接管 Linux 底层虚拟网卡！"
+echo "🔥 使用必读：PVE 侧必须勾选网桥的 [VLAN aware]，CT 网卡必须 [留空 VLAN Tag]！"
+echo "🔥 后台地址：http://控制台IP:8888"
 echo "------------------------------------------------"
