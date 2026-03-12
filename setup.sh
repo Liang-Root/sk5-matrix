@@ -2,20 +2,21 @@
 set -e
 
 echo "========================================================"
-echo " 🚀 正在部署 五脉神剑 V8.7 (Linux 策略路由终极锁定版) 🚀 "
+echo " 🚀 正在部署 六脉神剑 V9.0 (智能流量单位 + 策略路由版) 🚀 "
 echo "========================================================"
 
-# [1. 依赖检查]
+# [1. 依赖检查与安装]
 apt update && apt install python3 python3-pip python3-psutil curl iproute2 gunicorn logrotate -y
 pip3 install flask gunicorn --break-system-packages --quiet
 
-# [2. 下载 Gost]
+# [2. 下载 Gost 核心]
 if [ ! -f /usr/local/bin/gost ]; then
+    echo "正在下载 Gost 核心..."
     curl -L https://github.com/go-gost/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gunzip > /usr/local/bin/gost
     chmod +x /usr/local/bin/gost
 fi
 
-# [3. 数据持久化]
+# [3. 数据持久化保护]
 [ ! -f /root/proxy_config.json ] && echo "[]" > /root/proxy_config.json
 [ ! -f /root/proxy_ports.json ] && echo "[]" > /root/proxy_ports.json
 [ ! -f /root/proxy_modes.json ] && echo "[]" > /root/proxy_modes.json
@@ -23,15 +24,15 @@ fi
 [ ! -f /root/proxy_vlans.json ] && echo "[]" > /root/proxy_vlans.json
 chmod 666 /root/*.json
 
-# [4. 生成核心代码 V8.7 (注入 IP Rule 策略路由)]
+# [4. 生成 Python 核心代码：V9.0 六脉神剑版]
 cat <<'EOF' > /root/proxy_manager.py
 from flask import Flask, request, render_template_string, jsonify
 import subprocess, os, json, time, re, threading
 
 app = Flask(__name__)
+
 # 智能嗅探主业务网卡 (排除管理口 IP 所在的网卡)
 try:
-    # 优先找没有原生 IP 的光秃秃网卡作为 Trunk (比如 eth0)
     MAIN_IFACE = os.popen("ip link show | grep -E '^[0-9]+: (eth|ens|enp|net)' | awk -F': ' '{print $2}' | grep -v '@' | head -n 1").read().strip() or 'eth0'
 except:
     MAIN_IFACE = 'eth0'
@@ -40,8 +41,19 @@ CONFIG_FILE, PORTS_FILE = '/root/proxy_config.json', '/root/proxy_ports.json'
 MODES_FILE, BINDS_FILE, VLANS_FILE = '/root/proxy_modes.json', '/root/proxy_binds.json', '/root/proxy_vlans.json'
 last_ms_time = {}
 
+# 动态流量单位换算函数 (KB / MB / GB)
+def format_size(bytes_val):
+    kb = bytes_val / 1024.0
+    if kb >= 1048576:
+        return f"{round(kb / 1048576, 2)} GB"
+    elif kb >= 1024:
+        return f"{round(kb / 1024, 2)} MB"
+    else:
+        return f"{round(kb, 1)} KB"
+
 def load_data():
-    p, c, m, b, v = [10001, 10002, 10003, 10004, 10005], [], [], [], []
+    # 六脉神剑：默认初始化 6 个节点
+    p, c, m, b, v = [10001, 10002, 10003, 10004, 10005, 10006], [], [], [], []
     try:
         if os.path.exists(PORTS_FILE):
             with open(PORTS_FILE, 'r') as f: p = json.load(f) or p
@@ -65,12 +77,12 @@ HTML_TEMPLATE = """
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>五脉神剑 V8.7 | 策略路由终极版</title>
+    <title>六脉神剑 V9.0 | 矩阵控制器</title>
     <link href="https://cdn.staticfile.net/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #020617; color: #38bdf8; font-family: sans-serif; }
         .card { background: rgba(15, 23, 42, 0.95); border: 1px solid #0ea5e9; border-radius: 12px; margin-bottom: 20px; transition: 0.2s; }
-        .card:hover { border-color: #38bdf8; box-shadow: 0 0 10px rgba(56,189,248,0.3); }
+        .card:hover { border-color: #38bdf8; box-shadow: 0 0 12px rgba(56,189,248,0.4); }
         .port-label { font-family: monospace; font-size: 1.1rem; font-weight: bold; color: #fff; }
         .form-check-input:checked { background-color: #0ea5e9; border-color: #0ea5e9; }
         .sdn-panel { background: #0f172a; border: 1px dashed #eab308; padding: 10px; border-radius: 8px; margin-top: 10px; }
@@ -80,7 +92,7 @@ HTML_TEMPLATE = """
 <body class="p-4">
     <div class="container">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V8.7 <span class="badge bg-danger fs-6 align-middle">Linux 底层路由锁定</span></h2>
+            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V9.0 <span class="badge bg-danger fs-6 align-middle">六脉神剑 | 策略路由</span></h2>
             <button type="button" class="btn btn-outline-info" onclick="addNode()">+ 增加新节点</button>
         </div>
         <form method="post" id="mainForm">
@@ -98,8 +110,8 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                     <div class="d-flex justify-content-around mb-2 small">
-                        <span class="text-success">↓ <b id="down-{{i}}">0K</b></span>
-                        <span class="text-info">↑ <b id="up-{{i}}">0K</b></span>
+                        <span class="text-success fw-bold">↓ <span id="down-{{i}}">0 KB</span></span>
+                        <span class="text-info fw-bold">↑ <span id="up-{{i}}">0 KB</span></span>
                     </div>
                     
                     <input type="text" name="p{{i}}" value="{{configs[i]}}" placeholder="账号:密码@代理IP:端口" class="form-control form-control-sm bg-black text-info border-secondary mb-2" title="上游SK5节点">
@@ -159,7 +171,7 @@ def index_view():
 @app.route('/stats/<int:idx>')
 def stats(idx):
     ports, _, _, _, _ = load_data()
-    if idx >= len(ports): return jsonify({"up": "0K", "down": "0K", "ms": "已删除"})
+    if idx >= len(ports): return jsonify({"up": "0 KB", "down": "0 KB", "ms": "已删除"})
     port = ports[idx]
     global last_ms_time
     try:
@@ -175,8 +187,14 @@ def stats(idx):
                 ms_val = f"{int(float(res) * 1000)}ms" if res else "超时"
             except: ms_val = "超时"
             last_ms_time[idx] = now
-        return jsonify({"up": f"{round(raw_recv/1024, 1)}K", "down": f"{round(raw_sent/1024, 1)}K", "ms": ms_val})
-    except: return jsonify({"up": "0K", "down": "0K", "ms": "错误"})
+            
+        # 调用 V9.0 的智能换算函数，分别渲染上传和下载流量
+        return jsonify({
+            "up": format_size(raw_recv), 
+            "down": format_size(raw_sent), 
+            "ms": ms_val
+        })
+    except: return jsonify({"up": "0 KB", "down": "0 KB", "ms": "错误"})
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
@@ -206,7 +224,6 @@ def del_node(idx):
 def apply_network_and_proxy(ports, configs, modes, binds, vlans, old_vlans=[]):
     subprocess.run(["pkill", "-15", "gost"])
     
-    # 清理废弃的子网卡和路由表
     for v_id in old_vlans:
         if v_id and str(v_id).isdigit():
             os.system(f"ip link delete {MAIN_IFACE}.{v_id} 2>/dev/null")
@@ -222,15 +239,12 @@ def apply_network_and_proxy(ports, configs, modes, binds, vlans, old_vlans=[]):
         
         if vlan_id.isdigit() and bind_ip:
             iface_name = f"{MAIN_IFACE}.{vlan_id}"
-            # 智能推算网关 (把 IP 的最后一位变成 1，比如 192.168.10.253 -> 192.168.10.1)
             gw_ip = ".".join(bind_ip.split(".")[:3]) + ".1"
             
-            # 1. 建立虚拟网卡
             os.system(f"ip link add link {MAIN_IFACE} name {iface_name} type vlan id {vlan_id} 2>/dev/null")
             os.system(f"ip addr add {bind_ip}/24 dev {iface_name} 2>/dev/null")
             os.system(f"ip link set dev {iface_name} up 2>/dev/null")
             
-            # 2. 注入 Linux 策略路由 (重中之重！切断管理口漏水)
             os.system(f"ip rule del from {bind_ip} table {vlan_id} 2>/dev/null")
             os.system(f"ip rule add from {bind_ip} table {vlan_id}")
             os.system(f"ip route flush table {vlan_id} 2>/dev/null")
@@ -259,7 +273,7 @@ def deploy():
     with open(BINDS_FILE, 'w') as f: json.dump(new_binds, f)
     with open(VLANS_FILE, 'w') as f: json.dump(new_vlans, f)
     threading.Thread(target=apply_network_and_proxy, args=(ports, new_configs, new_modes, new_binds, new_vlans, old_vlans)).start()
-    return '<script>alert(`V8.7 策略路由已更新！\n流量已强制锁定，彻底切断管理口漏水...`); window.location.href="/";</script>'
+    return '<script>alert(`V9.0 六脉神剑 已部署！\n路由锁定与智能流量统计已生效...`); window.location.href="/";</script>'
 
 if __name__ == '__main__':
     p, c, m, b, v = load_data()
@@ -268,4 +282,4 @@ if __name__ == '__main__':
 EOF
 
 systemctl daemon-reload && systemctl restart proxy-web
-echo "✔️ V8.7 策略路由锁死版 升级完成！请去网页重新点击【部署】即可生效！"
+echo "✔️ V9.0 六脉神剑 升级完成！请刷新网页欣赏全新的流量显示！"
