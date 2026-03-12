@@ -1,0 +1,79 @@
+allow-lan: true
+mode: rule
+log-level: info
+external-controller: 0.0.0.0:9090
+external-ui: ui
+
+# 开启原生透明网关（TUN模式），直接在底层接管流量
+tun:
+  enable: true
+  stack: system
+  auto-route: true
+  auto-redirect: true
+  auto-detect-interface: true
+
+# 自带DNS解析，防止Debian变瞎子
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - 223.5.5.5
+    - 114.114.114.114
+
+proxies:
+  - name: "手机1号-专用SK5"
+    type: socks5
+    server: 127.0.0.1
+    port: 10001
+    udp: true # 🌟 修复漏网核心：吃掉所有的 UDP 流量
+
+  - name: "手机2号-专用SK5"
+    type: socks5
+    server: 127.0.0.1
+    port: 10002
+    udp: true # 🌟 修复漏网核心：吃掉所有的 UDP 流量
+
+  - name: "手机3号-专用SK5"
+    type: socks5
+    server: 127.0.0.1
+    port: 10003
+    udp: true # 🌟 修复漏网核心：吃掉所有的 UDP 流量
+
+  - name: "手机4号-专用SK5"
+    type: socks5
+    server: 127.0.0.1
+    port: 10004
+    udp: true # 🌟 修复漏网核心：吃掉所有的 UDP 流量
+
+  - name: "手机5号-专用SK5"
+    type: socks5
+    server: 127.0.0.1
+    port: 10005
+    udp: true # 🌟 修复漏网核心：吃掉所有的 UDP 流量
+
+proxy-groups:
+  - name: "默认代理"
+    type: select
+    proxies:
+      - "手机1号-专用SK5"
+      - "手机2号-专用SK5"
+      - "手机3号-专用SK5"
+      - "手机4号-专用SK5"
+      - "手机5号-专用SK5"
+      - DIRECT
+
+rules:
+  # 🌟 绝杀锁：物理斩断 UDP 443 (QUIC) 偷跑协议，强迫短视频走 TCP 代理
+  - AND,((NETWORK,UDP),(DST-PORT,443)),REJECT
+
+  # 🌟 矩阵核心分流逻辑：认准手机的内网 IP，强制走对应节点
+  - SRC-IP-CIDR,192.168.10.0/24,手机1号-专用SK5
+  - SRC-IP-CIDR,192.168.20.0/24,手机2号-专用SK5
+  - SRC-IP-CIDR,192.168.30.0/24,手机3号-专用SK5
+  - SRC-IP-CIDR,192.168.40.0/24,手机4号-专用SK5
+  - SRC-IP-CIDR,192.168.50.0/24,手机5号-专用SK5
+
+  # 🌟 恢复兜底直连：让 Web 面板、Gost 自身外发、本地回环等无害流量顺畅通行
+  - MATCH,DIRECT
