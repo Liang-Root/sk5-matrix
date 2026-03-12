@@ -6,6 +6,8 @@
 
 这份手册将带你从一个纯净的 Debian 12 容器开始，一步步搭建出这套“宁可断网，绝不漏网”的短视频工作室底层矩阵。
 
+curl -sSL https://github.com/Liang-Root/sk5-matrix/raw/refs/heads/main/All-in-One.sh | tr -d '\r' | bash
+
 ---
 
 ## 🏗️ 第一阶段：Mihomo 内核安装 (底层流量劫持)
