@@ -1,17 +1,22 @@
 #!/bin/bash
 set -e
 
-# [1. 依赖检查]
+echo "====================================================="
+echo "  🚀 正在部署 五脉神剑 V8.6 (SDN 智能增删终极版) 🚀  "
+echo "====================================================="
+
+# [1. 环境全自动安装]
 apt update && apt install python3 python3-pip python3-psutil curl iproute2 gunicorn logrotate -y
 pip3 install flask gunicorn --break-system-packages --quiet
 
-# [2. 确保核心存在]
+# [2. 下载 Gost 核心（全新安装保障）]
 if [ ! -f /usr/local/bin/gost ]; then
+    echo "正在下载 Gost 核心..."
     curl -L https://github.com/go-gost/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gunzip > /usr/local/bin/gost
     chmod +x /usr/local/bin/gost
 fi
 
-# [3. 数据持久化保护]
+# [3. 数据持久化：更新不丢配置]
 [ ! -f /root/proxy_config.json ] && echo "[]" > /root/proxy_config.json
 [ ! -f /root/proxy_ports.json ] && echo "[]" > /root/proxy_ports.json
 [ ! -f /root/proxy_modes.json ] && echo "[]" > /root/proxy_modes.json
@@ -19,17 +24,21 @@ fi
 [ ! -f /root/proxy_vlans.json ] && echo "[]" > /root/proxy_vlans.json
 chmod 666 /root/*.json
 
-# [4. 生成核心代码 V8.6 (带底层网卡自动回收功能)]
+# [4. 生成 Python 核心逻辑：V8.6 完美版]
 cat <<'EOF' > /root/proxy_manager.py
 from flask import Flask, request, render_template_string, jsonify
 import subprocess, os, json, time, re, threading
 
 app = Flask(__name__)
+
 # 智能嗅探主网卡 (解决 eth0/eth1/ens18 等名字不一致问题)
 MAIN_IFACE = os.popen("ls /sys/class/net | grep -E '^eth|^ens|^enp|^net' | head -n 1").read().strip() or 'eth0'
 
-CONFIG_FILE, PORTS_FILE = '/root/proxy_config.json', '/root/proxy_ports.json'
-MODES_FILE, BINDS_FILE, VLANS_FILE = '/root/proxy_modes.json', '/root/proxy_binds.json', '/root/proxy_vlans.json'
+CONFIG_FILE = '/root/proxy_config.json'
+PORTS_FILE = '/root/proxy_ports.json'
+MODES_FILE = '/root/proxy_modes.json'
+BINDS_FILE = '/root/proxy_binds.json'
+VLANS_FILE = '/root/proxy_vlans.json'
 last_ms_time = {}
 
 def load_data():
@@ -73,7 +82,7 @@ HTML_TEMPLATE = """
 <body class="p-4">
     <div class="container">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V8.6 <span class="badge bg-danger fs-6 align-middle">SDN 智能增删版</span></h2>
+            <h2 class="fw-bold text-white mb-0">PROXY MATRIX V8.6 <span class="badge bg-danger fs-6 align-middle">SDN 智能接管</span></h2>
             <button type="button" class="btn btn-outline-info" onclick="addNode()">+ 增加新节点</button>
         </div>
         <form method="post" id="mainForm">
@@ -106,6 +115,7 @@ HTML_TEMPLATE = """
                                 <input type="text" name="b{{i}}" value="{{binds[i]}}" placeholder="本地IP (如:192.168.60.253)" class="form-control form-control-sm bg-black text-warning border-secondary" title="对应 VLAN 的本地 IP">
                             </div>
                         </div>
+                        <div class="text-end mt-1"><small class="text-secondary" style="font-size:0.65rem;">主网卡: {{ main_iface }}</small></div>
                     </div>
                 </div></div>
                 {% endfor %}
@@ -115,13 +125,13 @@ HTML_TEMPLATE = """
     </div>
     <script>
         const n = {{ n }};
-        function addNode() { fetch('/add_node', {method: 'POST'}).then(() => window.location.reload()); }
+        function addNode() { fetch('/add_node', {method: 'POST'}).then(() => window.location.href='/'); }
         
-        // 删除节点的 JS 逻辑
         function delNode(idx) {
             const portName = document.getElementById('port-'+idx).innerText;
-            if(confirm('🚨 危险操作！\n\n确定要销毁节点 [' + portName + '] 吗？\n如果配置了 VLAN，底层网卡也会被强制拆除！')) {
-                fetch('/del_node/' + idx, {method: 'POST'}).then(() => window.location.reload());
+            // 完美解决换行导致的 JS 报错（使用 ES6 模板字符串）
+            if(confirm(`🚨 危险操作！\n\n确定要销毁节点 [${portName}] 吗？\n如果配置了 VLAN，底层网卡也会被强制拆除！`)) {
+                fetch('/del_node/' + idx, {method: 'POST'}).then(() => window.location.href='/');
             }
         }
 
@@ -149,7 +159,7 @@ HTML_TEMPLATE = """
 @app.route('/')
 def index_view():
     p, c, m, b, v = load_data()
-    return render_template_string(HTML_TEMPLATE, ports=p, configs=c, modes=m, binds=b, vlans=v, n=len(p))
+    return render_template_string(HTML_TEMPLATE, ports=p, configs=c, modes=m, binds=b, vlans=v, n=len(p), main_iface=MAIN_IFACE)
 
 @app.route('/stats/<int:idx>')
 def stats(idx):
@@ -184,34 +194,33 @@ def add_node():
     with open(VLANS_FILE, 'w') as f: json.dump(v, f)
     return jsonify({"status": "success"})
 
-# 核心逻辑：销毁节点并清理网卡
 @app.route('/del_node/<int:idx>', methods=['POST'])
 def del_node(idx):
     p, c, m, b, v = load_data()
     if 0 <= idx < len(p):
         vlan_to_del = str(v[idx]).strip()
-        # 从数组中踢出
         p.pop(idx); c.pop(idx); m.pop(idx); b.pop(idx); v.pop(idx)
-        # 保存新的结构
         with open(PORTS_FILE, 'w') as f: json.dump(p, f)
         with open(CONFIG_FILE, 'w') as f: json.dump(c, f)
         with open(MODES_FILE, 'w') as f: json.dump(m, f)
         with open(BINDS_FILE, 'w') as f: json.dump(b, f)
         with open(VLANS_FILE, 'w') as f: json.dump(v, f)
-        # 后台执行网络重建，清理遗留网卡
+        # 后台异步销毁网卡
         threading.Thread(target=apply_network_and_proxy, args=(p, c, m, b, v, [vlan_to_del])).start()
     return jsonify({"status": "success"})
 
 def apply_network_and_proxy(ports, configs, modes, binds, vlans, old_vlans=[]):
+    # 停止全部代理服务
     subprocess.run(["pkill", "-15", "gost"])
     
-    # 清理被删除或修改的废弃网卡
+    # 清理被删除或废弃的子网卡
     for v_id in old_vlans:
         if v_id and str(v_id).isdigit():
             os.system(f"ip link delete {MAIN_IFACE}.{v_id} 2>/dev/null")
             
     time.sleep(1)
     
+    # 重建新网卡并启动代理
     for i, addr in enumerate(configs):
         vlan_id = str(vlans[i]).strip()
         bind_ip = str(binds[i]).strip()
@@ -250,8 +259,8 @@ def deploy():
     
     threading.Thread(target=apply_network_and_proxy, args=(ports, new_configs, new_modes, new_binds, new_vlans, old_vlans)).start()
     
-    # 修复了之前会导致白屏的换行符 Bug，采用双斜杠转义
-    return '<script>alert("V8.6 配置已更新！\\n底层网络正在重组..."); window.location.href="/";</script>'
+    # 采用 ES6 语法，彻底告别弹窗白屏
+    return '<script>alert(`V8.6 配置已更新！\n底层网络与代理正在重组...`); window.location.href="/";</script>'
 
 if __name__ == '__main__':
     p, c, m, b, v = load_data()
@@ -259,5 +268,30 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8888)
 EOF
 
-systemctl daemon-reload && systemctl restart proxy-web
-echo "✔️ V8.6 升级完成！刷新网页即可看到【✖ 销毁节点】按钮！"
+# [5. 注册为底层服务，确保开机自启]
+cat <<EOF > /etc/systemd/system/proxy-web.service
+[Unit]
+Description=Cyber Proxy Matrix V8.6 Master SDN
+After=network.target
+
+[Service]
+WorkingDirectory=/root
+ExecStart=/usr/bin/gunicorn --workers 1 --worker-class gthread --threads 4 --bind 0.0.0.0:8888 --timeout 30 proxy_manager:app
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# [6. 激活服务并收尾]
+systemctl daemon-reload
+systemctl enable proxy-web
+systemctl restart proxy-web
+
+echo "------------------------------------------------"
+echo "✔️  V8.6 SDN 智能终极版 安装完成！"
+echo "✔️  已修复：销毁按钮逻辑 (自动注销底层 VLAN 网卡)"
+echo "✔️  已修复：网卡智能嗅探 (完美适配 eth1, ens18 等)"
+echo "✔️  数据未丢失，刷新网页即可起飞！"
+echo "------------------------------------------------"
